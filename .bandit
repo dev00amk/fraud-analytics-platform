@@ -1,0 +1,17 @@
+[bandit]
+# Bandit security configuration
+exclude_dirs = [
+    "*/migrations/*",
+    "*/venv/*",
+    "*/node_modules/*",
+    "*/tests/*"
+]
+
+# Skip specific tests that are false positives
+skips = [
+    "B101",  # Skip assert_used test (used in tests)
+    "B601",  # Skip shell injection (we control the inputs)
+]
+
+# Security hardening - fail on medium and high severity
+severity = medium

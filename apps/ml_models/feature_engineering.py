@@ -496,7 +496,8 @@ class DeviceFingerprinter:
 
     def _get_device_reputation(self, device_fp: str) -> Dict[str, float]:
         """Get device reputation from historical data."""
-        device_key = f"device:{hashlib.md5(device_fp.encode()).hexdigest()}"
+        # SECURITY: Using SHA-256 instead of MD5 for cryptographic security
+        device_key = f"device:{hashlib.sha256(device_fp.encode()).hexdigest()}"
 
         # Try to get from Redis
         if self.redis_client:
@@ -839,7 +840,8 @@ class FeatureEngineeringPipeline:
             timestamp = datetime.fromisoformat(
                 transaction["timestamp"].replace("Z", "+00:00")
             )
-        except:
+        except Exception as e:
+            logger.warning("Failed to parse timestamp, using current time: %s", e)
             timestamp = datetime.now()
 
         features = {
@@ -947,7 +949,8 @@ class FeatureEngineeringPipeline:
             "timestamp": transaction.get("timestamp"),
             "merchant_id": transaction.get("merchant_id"),
         }
-        return hashlib.md5(str(sorted(key_data.items())).encode()).hexdigest()
+        # SECURITY: Using SHA-256 instead of MD5 for cryptographic security
+        return hashlib.sha256(str(sorted(key_data.items())).encode()).hexdigest()
 
     def _is_cache_valid(self, cached_result: Dict) -> bool:
         """Check if cached result is still valid."""

@@ -187,7 +187,8 @@ class XGBoostModel:
                     float(6 <= dt.hour <= 22),  # Is business hours
                 ]
             )
-        except:
+        except Exception as e:
+            logger.warning("Failed to parse timestamp features, using defaults: %s", e)
             features.extend([0] * 6)
 
         # User behavior features

@@ -20,7 +20,8 @@ logger = logging.getLogger(__name__)
 class AdvancedFraudDetectionService:
     """
     Advanced fraud detection service with ML models and real-time feature engineering.
-    Integrates ensemble models (XGBoost + LSTM + GNN + Transformer) for production-grade fraud detection.
+    Integrates ensemble models (XGBoost + LSTM + GNN + Transformer) for
+    production-grade fraud detection.
     """
 
     def __init__(self):
@@ -556,8 +557,10 @@ class AdvancedFraudDetectionService:
             )
             if timestamp.hour < 6 or timestamp.hour > 22:
                 risk_score += 0.1
-        except:
-            pass
+        except Exception as e:
+            # SECURITY: Log exceptions instead of silencing them
+            logger.warning("Failed to parse timestamp for risk analysis: %s", e)
+            # Continue with default risk assessment
 
         fraud_probability = min(risk_score, 0.9)
 
