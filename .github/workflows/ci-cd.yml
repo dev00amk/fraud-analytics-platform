@@ -48,7 +48,7 @@ jobs:
           pip-audit
 
       - name: Upload security reports
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: security-reports
@@ -176,7 +176,7 @@ jobs:
         run: npm run build
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: frontend-build
           path: frontend/build/
@@ -238,7 +238,7 @@ jobs:
             --html=performance-report.html --csv=performance
 
       - name: Upload performance reports
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: performance-reports
@@ -282,7 +282,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Download frontend build
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: frontend-build
           path: frontend/build/
@@ -404,7 +404,7 @@ jobs:
           cmd_options: '-a'
 
       - name: Upload ZAP report
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: zap-report
