@@ -1,6 +1,6 @@
-# 🤝 Contributing to Fraud Analytics Platform
+# 🤝 Contributing to FraudGuard
 
-Thank you for your interest in contributing to the Fraud Analytics Platform! This document provides guidelines and information for contributors.
+Thank you for your interest in contributing to FraudGuard! This guide will help you get started with contributing to our open source fraud detection toolkit.
 
 ## 📋 Table of Contents
 
