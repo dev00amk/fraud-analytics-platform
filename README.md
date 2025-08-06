@@ -389,10 +389,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [Stack Overflow](https://stackoverflow.com/questions/tagged/fraud-analytics-platform)
 
 ### Commercial Support
-For enterprise support, custom development, or consulting:
-- Email: support@fraudanalytics.com
-- Website: https://fraudanalytics.com
-- Phone: +1 (555) 123-4567
+For enterprise support, custom development, or consulting: #comming soon
+
 
 ### Roadmap
 

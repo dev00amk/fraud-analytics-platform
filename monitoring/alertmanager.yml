@@ -1,0 +1,65 @@
+global:
+  # Free SMTP options:
+  # Gmail: smtp.gmail.com:587
+  # Outlook: smtp-mail.outlook.com:587
+  # Yahoo: smtp.mail.yahoo.com:587
+  smtp_smarthost: 'localhost:1025'  # Use mailhog for local testing
+  smtp_from: 'alertmanager@fraud-analytics.local'
+
+route:
+  group_by: ['alertname']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 1h
+  receiver: 'web.hook'
+
+receivers:
+  - name: 'web.hook'
+    webhook_configs:
+      - url: 'http://localhost:5000/webhook'
+        send_resolved: true
+
+  - name: 'email-alerts'
+    email_configs:
+      - to: 'admin@your-domain.com'
+        subject: '🚨 Fraud Analytics Alert: {{ .GroupLabels.alertname }}'
+        body: |
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Instance: {{ .Labels.instance }}
+          Severity: {{ .Labels.severity }}
+          {{ end }}
+
+  - name: 'slack-alerts'  # Free Slack webhook
+    slack_configs:
+      - api_url: 'YOUR_SLACK_WEBHOOK_URL_HERE'
+        channel: '#alerts'
+        username: 'AlertManager'
+        title: 'Fraud Analytics Alert'
+        text: |
+          {{ range .Alerts }}
+          *Alert:* {{ .Annotations.summary }}
+          *Description:* {{ .Annotations.description }}
+          *Instance:* {{ .Labels.instance }}
+          *Severity:* {{ .Labels.severity }}
+          {{ end }}
+
+  - name: 'discord-alerts'  # Free Discord webhook
+    discord_configs:
+      - webhook_url: 'YOUR_DISCORD_WEBHOOK_URL_HERE'
+        title: '🚨 Fraud Analytics Alert'
+        message: |
+          {{ range .Alerts }}
+          **Alert:** {{ .Annotations.summary }}
+          **Description:** {{ .Annotations.description }}
+          **Instance:** {{ .Labels.instance }}
+          **Severity:** {{ .Labels.severity }}
+          {{ end }}
+
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'dev', 'instance']
