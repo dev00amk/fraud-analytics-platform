@@ -1,0 +1,599 @@
+name: Enterprise CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop, 'release/*' ]
+  pull_request:
+    branches: [ main, develop ]
+  schedule:
+    - cron: '0 2 * * *'  # Daily security scans
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '18'
+
+jobs:
+  # ===============================
+  # SECURITY AND COMPLIANCE
+  # ===============================
+  security-scan:
+    name: Security & Compliance Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      # Secret Detection
+      - name: Secret Detection with TruffleHog
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: main
+          head: HEAD
+          extra_args: --debug --only-verified
+      
+      # Static Application Security Testing (SAST)
+      - name: SAST with Semgrep
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/security-audit
+            p/secrets
+            p/owasp-top-ten
+            p/cwe-top-25
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+      
+      # Python Security Scan
+      - name: Python Security with Bandit
+        run: |
+          pip install bandit[toml]
+          bandit -r apps/ -f sarif -o bandit-report.sarif || true
+      
+      # Upload SARIF results
+      - name: Upload SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: bandit-report.sarif
+      
+      # Dependency Vulnerability Scan
+      - name: Dependency Scan with Safety
+        run: |
+          pip install safety
+          safety check --json --output safety-report.json || true
+      
+      # License Compliance Check
+      - name: License Compliance
+        uses: fossa-contrib/fossa-action@v2
+        with:
+          api-key: ${{ secrets.FOSSA_API_KEY }}
+          project-name: 'fraud-analytics-platform'
+      
+      # Infrastructure Security Scan
+      - name: Infrastructure Security with Checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          framework: dockerfile,kubernetes,terraform
+          output_format: sarif
+          output_file_path: checkov-report.sarif
+
+  # ===============================
+  # CODE QUALITY AND TESTING
+  # ===============================
+  code-quality:
+    name: Code Quality & Testing
+    runs-on: ubuntu-latest
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: fraud_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+      
+      # Python Dependencies
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      
+      # Code Formatting Check
+      - name: Check code formatting with Black
+        run: black --check --diff apps/ fraud_platform/
+      
+      # Import Sorting Check
+      - name: Check import sorting with isort
+        run: isort --check-only --diff apps/ fraud_platform/
+      
+      # Type Checking
+      - name: Type checking with mypy
+        run: mypy apps/ fraud_platform/ --ignore-missing-imports
+      
+      # Linting
+      - name: Lint with flake8
+        run: |
+          flake8 apps/ fraud_platform/ --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 apps/ fraud_platform/ --count --exit-zero --max-complexity=15 --max-line-length=88 --statistics
+      
+      # Python Unit Tests
+      - name: Run Python tests with coverage
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost/fraud_test
+          REDIS_URL: redis://localhost:6379/0
+          DJANGO_SETTINGS_MODULE: fraud_platform.settings
+        run: |
+          coverage run --source='.' manage.py test
+          coverage xml
+          coverage html
+      
+      # Frontend Dependencies
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      
+      # Frontend Linting
+      - name: Lint frontend code
+        working-directory: frontend
+        run: npm run lint
+      
+      # Frontend Type Checking
+      - name: TypeScript type checking
+        working-directory: frontend
+        run: npm run type-check
+      
+      # Frontend Unit Tests
+      - name: Run frontend tests
+        working-directory: frontend
+        run: npm run test:coverage
+      
+      # Upload test results
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./coverage.xml,./frontend/coverage/lcov.info
+          flags: backend,frontend
+          name: fraud-analytics-coverage
+      
+      # SonarQube Analysis
+      - name: SonarQube Scan
+        uses: sonarqube-quality-gate-action@master
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+  # ===============================
+  # PERFORMANCE TESTING
+  # ===============================
+  performance-test:
+    name: Performance Testing
+    runs-on: ubuntu-latest
+    needs: [code-quality]
+    if: github.ref == 'refs/heads/main' || contains(github.ref, 'release/')
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      
+      # Start application for testing
+      - name: Start application
+        run: |
+          pip install -r requirements.txt
+          python manage.py migrate --run-syncdb
+          python manage.py runserver &
+          sleep 30
+        env:
+          DJANGO_SETTINGS_MODULE: fraud_platform.settings
+          DATABASE_URL: sqlite:///test.db
+      
+      # Install Locust
+      - name: Install Locust
+        run: pip install locust
+      
+      # Run Load Tests
+      - name: Run load tests
+        run: |
+          locust -f tests/performance/locustfile.py --host=http://localhost:8000 \
+                 --users 100 --spawn-rate 10 --run-time 5m --html performance_report.html
+      
+      # Upload Performance Results
+      - name: Upload performance results
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-results
+          path: performance_report.html
+      
+      # Performance Regression Check
+      - name: Performance regression check
+        run: |
+          python scripts/performance_regression_check.py performance_report.html
+
+  # ===============================
+  # CONTAINER BUILD AND SCAN
+  # ===============================
+  container-build:
+    name: Container Build & Security Scan
+    runs-on: ubuntu-latest
+    needs: [security-scan, code-quality]
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+    
+    outputs:
+      image-digest: ${{ steps.build.outputs.digest }}
+      image-tag: ${{ steps.meta.outputs.tags }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      # Set up Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      # Log in to Container Registry
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      # Extract metadata
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+      
+      # Build and push Docker image
+      - name: Build and push Docker image
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64,linux/arm64
+      
+      # Container vulnerability scan
+      - name: Container Security Scan with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+      
+      # Upload Trivy scan results
+      - name: Upload Trivy scan results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+      
+      # Container compliance check
+      - name: Container Compliance with Docker Bench
+        run: |
+          docker run --rm --net host --pid host --userns host --cap-add audit_control \
+            -e DOCKER_CONTENT_TRUST=$DOCKER_CONTENT_TRUST \
+            -v /etc:/etc:ro \
+            -v /usr/bin/containerd:/usr/bin/containerd:ro \
+            -v /usr/bin/runc:/usr/bin/runc:ro \
+            -v /usr/lib/systemd:/usr/lib/systemd:ro \
+            -v /var/lib:/var/lib:ro \
+            -v /var/run/docker.sock:/var/run/docker.sock:ro \
+            --label docker_bench_security \
+            docker/docker-bench-security
+
+  # ===============================
+  # INFRASTRUCTURE VALIDATION
+  # ===============================
+  infrastructure-validation:
+    name: Infrastructure Validation
+    runs-on: ubuntu-latest
+    needs: [security-scan]
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      # Validate Kubernetes manifests
+      - name: Validate Kubernetes manifests
+        uses: instrumenta/kubeval-action@master
+        with:
+          files: k8s/
+      
+      # Kubernetes security policies
+      - name: Kubernetes Security with Polaris
+        run: |
+          curl -L https://github.com/FairwindsOps/polaris/releases/latest/download/polaris_linux_amd64.tar.gz | tar xz
+          ./polaris audit --audit-path k8s/ --format json > polaris-report.json
+      
+      # Helm chart validation
+      - name: Validate Helm charts
+        if: hashFiles('helm/**') != ''
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm lint helm/fraud-analytics-platform/
+          helm template fraud-analytics-platform helm/fraud-analytics-platform/ --validate
+      
+      # Terraform validation (if present)
+      - name: Setup Terraform
+        if: hashFiles('terraform/**') != ''
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.6.0
+      
+      - name: Terraform Format Check
+        if: hashFiles('terraform/**') != ''
+        run: terraform fmt -check -recursive terraform/
+      
+      - name: Terraform Validation
+        if: hashFiles('terraform/**') != ''
+        run: |
+          cd terraform/
+          terraform init -backend=false
+          terraform validate
+
+  # ===============================
+  # DEPLOYMENT TO STAGING
+  # ===============================
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [container-build, infrastructure-validation, performance-test]
+    if: github.ref == 'refs/heads/develop'
+    environment:
+      name: staging
+      url: https://staging.fraudguard.dev
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      # Configure kubectl
+      - name: Configure kubectl
+        run: |
+          echo "${{ secrets.KUBE_CONFIG_STAGING }}" | base64 -d > kubeconfig
+          export KUBECONFIG=kubeconfig
+      
+      # Deploy to staging
+      - name: Deploy to Kubernetes
+        run: |
+          export KUBECONFIG=kubeconfig
+          kubectl set image deployment/fraud-analytics-platform \
+            fraud-analytics-platform=${{ needs.container-build.outputs.image-tag }} \
+            -n staging
+          kubectl rollout status deployment/fraud-analytics-platform -n staging --timeout=600s
+      
+      # Run smoke tests
+      - name: Run smoke tests
+        run: |
+          python tests/smoke/smoke_tests.py --environment staging
+      
+      # Notify deployment
+      - name: Notify Slack
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          channel: '#deployments'
+          webhook_url: ${{ secrets.SLACK_WEBHOOK }}
+
+  # ===============================
+  # DEPLOYMENT TO PRODUCTION
+  # ===============================
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [container-build, infrastructure-validation]
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: production
+      url: https://api.fraudguard.dev
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      # Pre-deployment checks
+      - name: Pre-deployment validation
+        run: |
+          # Check error budget
+          python scripts/error_budget_check.py
+          # Validate configuration
+          python scripts/validate_production_config.py
+          # Check dependencies
+          python scripts/dependency_health_check.py
+      
+      # Blue-Green Deployment
+      - name: Blue-Green Deployment
+        run: |
+          echo "${{ secrets.KUBE_CONFIG_PRODUCTION }}" | base64 -d > kubeconfig
+          export KUBECONFIG=kubeconfig
+          
+          # Deploy to green environment
+          kubectl set image deployment/fraud-analytics-platform-green \
+            fraud-analytics-platform=${{ needs.container-build.outputs.image-tag }} \
+            -n production
+          
+          # Wait for green deployment
+          kubectl rollout status deployment/fraud-analytics-platform-green -n production --timeout=600s
+          
+          # Run health checks on green
+          python scripts/health_check.py --environment green
+          
+          # Switch traffic to green (blue-green switch)
+          kubectl patch service fraud-analytics-platform-service \
+            -p '{"spec":{"selector":{"version":"green"}}}' -n production
+          
+          # Monitor for 10 minutes
+          sleep 600
+          
+          # Final health check
+          python scripts/health_check.py --environment production
+      
+      # Rollback on failure
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          export KUBECONFIG=kubeconfig
+          # Switch traffic back to blue
+          kubectl patch service fraud-analytics-platform-service \
+            -p '{"spec":{"selector":{"version":"blue"}}}' -n production
+      
+      # Post-deployment verification
+      - name: Post-deployment verification
+        run: |
+          # Verify all endpoints
+          python scripts/endpoint_verification.py
+          # Check metrics
+          python scripts/metrics_validation.py
+          # Verify fraud detection accuracy
+          python scripts/fraud_accuracy_check.py
+      
+      # Create deployment record
+      - name: Create deployment record
+        run: |
+          python scripts/create_deployment_record.py \
+            --version ${{ github.sha }} \
+            --environment production \
+            --image ${{ needs.container-build.outputs.image-tag }}
+
+  # ===============================
+  # POST-DEPLOYMENT MONITORING
+  # ===============================
+  post-deployment-monitoring:
+    name: Post-Deployment Monitoring
+    runs-on: ubuntu-latest
+    needs: [deploy-production]
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      # Extended monitoring
+      - name: Extended monitoring period
+        run: |
+          echo "Starting 30-minute extended monitoring period..."
+          python scripts/extended_monitoring.py --duration 1800  # 30 minutes
+      
+      # Generate deployment report
+      - name: Generate deployment report
+        run: |
+          python scripts/generate_deployment_report.py \
+            --deployment-id ${{ github.sha }} \
+            --output deployment-report.html
+      
+      # Upload deployment report
+      - name: Upload deployment report
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-report-${{ github.sha }}
+          path: deployment-report.html
+      
+      # Update status page
+      - name: Update status page
+        run: |
+          curl -X POST ${{ secrets.STATUS_PAGE_WEBHOOK }} \
+            -H "Content-Type: application/json" \
+            -d '{
+              "component_id": "fraud-api",
+              "status": "operational",
+              "message": "Deployment ${{ github.sha }} completed successfully"
+            }'
+
+  # ===============================
+  # COMPLIANCE REPORTING
+  # ===============================
+  compliance-report:
+    name: Generate Compliance Report
+    runs-on: ubuntu-latest
+    needs: [security-scan, code-quality, container-build]
+    if: github.ref == 'refs/heads/main' || github.event_name == 'schedule'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      # Generate compliance artifacts
+      - name: Generate compliance report
+        run: |
+          python scripts/generate_compliance_report.py \
+            --frameworks SOC2,PCI_DSS,GDPR,ISO27001 \
+            --output compliance-report.pdf
+      
+      # Upload to compliance storage
+      - name: Upload compliance artifacts
+        run: |
+          # Upload to secure compliance storage
+          python scripts/upload_compliance_artifacts.py \
+            --report compliance-report.pdf \
+            --evidence-folder compliance-evidence/
+      
+      # Notify compliance team
+      - name: Notify compliance team
+        run: |
+          python scripts/notify_compliance_team.py \
+            --report-url ${{ secrets.COMPLIANCE_STORAGE_URL }}/compliance-report.pdf
+
+# ===============================
+# WORKFLOW TRIGGERS AND RULES
+# ===============================
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+# Global timeout for all jobs
+timeout-minutes: 120
