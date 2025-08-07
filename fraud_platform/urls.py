@@ -23,6 +23,7 @@ urlpatterns = [
     path("api/v1/cases/", include("apps.cases.urls")),
     path("api/v1/analytics/", include("apps.analytics.urls")),
     path("api/v1/webhooks/", include("apps.webhooks.urls")),
+    path("api/v1/alerts/", include("apps.alerts.urls")),
     # Health check
     path("health/", include("apps.core.urls")),
 ]

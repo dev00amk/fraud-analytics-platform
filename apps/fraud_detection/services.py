@@ -9,12 +9,19 @@ import redis
 from django.conf import settings
 from django.core.cache import cache
 
-from apps.ml_models.ensemble_model import EnsembleInferenceEngine
-from apps.ml_models.feature_engineering import FeatureEngineeringPipeline
-
 from .models import FraudRule
 
 logger = logging.getLogger(__name__)
+
+try:
+    from apps.ml_models.ensemble_model import EnsembleInferenceEngine
+    from apps.ml_models.feature_engineering import FeatureEngineeringPipeline
+    ML_MODELS_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"ML models not available: {e}")
+    EnsembleInferenceEngine = None
+    FeatureEngineeringPipeline = None
+    ML_MODELS_AVAILABLE = False
 
 
 class AdvancedFraudDetectionService:
@@ -46,22 +53,27 @@ class AdvancedFraudDetectionService:
             self.redis_client = None
 
         # Initialize feature engineering pipeline
-        self.feature_pipeline = FeatureEngineeringPipeline(
-            redis_client=self.redis_client,
-            enable_caching=True,
-            cache_ttl=300,  # 5 minutes
-            max_workers=4,
-        )
+        if ML_MODELS_AVAILABLE and FeatureEngineeringPipeline:
+            try:
+                self.feature_pipeline = FeatureEngineeringPipeline()
+                logger.info("Feature engineering pipeline initialized successfully")
+            except Exception as e:
+                logger.warning(f"Feature pipeline initialization failed: {e}")
+                self.feature_pipeline = None
+        else:
+            logger.info("Using basic feature engineering (ML models not available)")
+            self.feature_pipeline = None
 
         # Initialize ensemble model
-        try:
-            self.ensemble_engine = EnsembleInferenceEngine(
-                config_path=getattr(
-                    settings, "ML_MODEL_CONFIG_PATH", "ml_models/config.json"
-                )
-            )
-        except Exception as e:
-            logger.warning(f"Ensemble model initialization failed: {e}")
+        if ML_MODELS_AVAILABLE and EnsembleInferenceEngine:
+            try:
+                self.ensemble_engine = EnsembleInferenceEngine()
+                logger.info("Ensemble model initialized successfully")
+            except Exception as e:
+                logger.warning(f"Ensemble model initialization failed: {e}")
+                self.ensemble_engine = None
+        else:
+            logger.info("Using rule-based detection (ML models not available)")
             self.ensemble_engine = None
 
         # Performance tracking
@@ -175,6 +187,10 @@ class AdvancedFraudDetectionService:
     ):
         """Extract comprehensive features using the feature engineering pipeline."""
         try:
+            if not self.feature_pipeline:
+                # Fallback to basic feature extraction
+                return self._extract_basic_features(transaction_data)
+            
             # Get historical data from context
             user_transactions = context.get("user_transactions", []) if context else []
             merchant_transactions = (
@@ -193,7 +209,7 @@ class AdvancedFraudDetectionService:
 
         except Exception as e:
             logger.error(f"Feature extraction failed: {e}")
-            return None
+            return self._extract_basic_features(transaction_data)
 
     async def _run_ml_prediction_async(
         self,
@@ -238,7 +254,12 @@ class AdvancedFraudDetectionService:
     ) -> List[Dict[str, Any]]:
         """Apply fraud detection rules with feature-based evaluation."""
         try:
-            rules = FraudRule.objects.filter(is_active=True, owner=user)
+            from asgiref.sync import sync_to_async
+            
+            # Get rules using sync_to_async to properly handle database queries
+            rules = await sync_to_async(list)(
+                FraudRule.objects.filter(is_active=True, owner=user)
+            )
             results = []
 
             for rule in rules:
@@ -614,6 +635,59 @@ class AdvancedFraudDetectionService:
             "critical": "block",
         }
         return recommendations.get(risk_level, "manual_review")
+
+    def _extract_basic_features(self, transaction_data: Dict[str, Any]):
+        """Basic feature extraction when ML models aren't available."""
+        class BasicFeatures:
+            def __init__(self, transaction_data):
+                self.transaction_features = {
+                    'amount': float(transaction_data.get('amount', 0)),
+                    'hour_of_day': self._extract_hour(transaction_data.get('timestamp')),
+                    'is_weekend': self._is_weekend(transaction_data.get('timestamp')),
+                }
+                self.user_features = {
+                    'user_id_hash': hash(str(transaction_data.get('user_id', ''))) % 1000000,
+                }
+                self.merchant_features = {
+                    'merchant_id_hash': hash(str(transaction_data.get('merchant_id', ''))) % 1000000,
+                }
+                self.device_features = {
+                    'ip_address_hash': hash(str(transaction_data.get('ip_address', ''))) % 1000000,
+                }
+                self.velocity_features = {
+                    'amount_velocity': float(transaction_data.get('amount', 0)) / 100,
+                }
+                
+            def _extract_hour(self, timestamp):
+                try:
+                    from datetime import datetime
+                    if isinstance(timestamp, str):
+                        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                        return dt.hour
+                    return 12  # Default
+                except:
+                    return 12
+                    
+            def _is_weekend(self, timestamp):
+                try:
+                    from datetime import datetime
+                    if isinstance(timestamp, str):
+                        dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                        return dt.weekday() >= 5
+                    return False
+                except:
+                    return False
+                    
+            def to_dict(self):
+                return {
+                    **self.transaction_features,
+                    **self.user_features,
+                    **self.merchant_features,
+                    **self.device_features,
+                    **self.velocity_features,
+                }
+                
+        return BasicFeatures(transaction_data)
 
     def _update_performance_metrics(
         self, inference_time: float, results: Dict[str, Any]

@@ -48,6 +48,7 @@ LOCAL_APPS = [
     "apps.cases",
     "apps.analytics",
     "apps.webhooks",
+    "apps.alerts",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -84,7 +85,16 @@ TEMPLATES = [
 WSGI_APPLICATION = "fraud_platform.wsgi.application"
 
 # Database
-DATABASES = {"default": env.db()}
+# Use SQLite for quick setup, PostgreSQL for production
+DATABASES = {
+    "default": {
+        "ENGINE": "django.db.backends.sqlite3",
+        "NAME": BASE_DIR / "db.sqlite3",
+    }
+}
+
+# Uncomment below for PostgreSQL in production
+# DATABASES = {"default": env.db()}
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
