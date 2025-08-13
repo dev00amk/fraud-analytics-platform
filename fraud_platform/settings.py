@@ -55,6 +55,7 @@ INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "apps.security.api_security.APISecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -62,6 +63,7 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "apps.security.error_handling.SecurityErrorMiddleware",
 ]
 
 ROOT_URLCONF = "fraud_platform.urls"
@@ -176,6 +178,49 @@ CORS_ALLOWED_ORIGINS = env.list(
     ],
 )
 
+# Security Framework Configuration
+SECURITY_FRAMEWORK_ENABLED = env.bool("SECURITY_FRAMEWORK_ENABLED", default=True)
+
+# Encryption keys for security framework
+ENCRYPTION_KEY = env("ENCRYPTION_KEY", default=None)
+PII_ENCRYPTION_KEY = env("PII_ENCRYPTION_KEY", default=None)
+FINANCIAL_ENCRYPTION_KEY = env("FINANCIAL_ENCRYPTION_KEY", default=None)
+SENSITIVE_ENCRYPTION_KEY = env("SENSITIVE_ENCRYPTION_KEY", default=None)
+AUDIT_ENCRYPTION_KEY = env("AUDIT_ENCRYPTION_KEY", default=None)
+
+# Security Middleware (add to MIDDLEWARE list)
+SECURITY_MIDDLEWARE = [
+    'apps.security.api_security.APISecurityMiddleware',
+    'apps.security.error_handling.SecurityErrorMiddleware',
+]
+
+# Rate Limiting Configuration
+RATE_LIMITING_ENABLED = env.bool("RATE_LIMITING_ENABLED", default=True)
+RATE_LIMIT_DEFAULT_REQUESTS = env.int("RATE_LIMIT_DEFAULT_REQUESTS", default=1000)
+RATE_LIMIT_DEFAULT_WINDOW = env.int("RATE_LIMIT_DEFAULT_WINDOW", default=3600)
+
+# DDoS Protection
+DDOS_PROTECTION_ENABLED = env.bool("DDOS_PROTECTION_ENABLED", default=True)
+DDOS_THRESHOLD_CONNECTIONS = env.int("DDOS_THRESHOLD_CONNECTIONS", default=50)
+DDOS_THRESHOLD_WINDOW = env.int("DDOS_THRESHOLD_WINDOW", default=10)
+
+# Geographic Blocking
+GEOGRAPHIC_BLOCKS = env.list("GEOGRAPHIC_BLOCKS", default=[])
+
+# Blocked IPs
+BLOCKED_IPS = env.list("BLOCKED_IPS", default=[])
+
+# Audit and Compliance
+AUDIT_LOGGING_ENABLED = env.bool("AUDIT_LOGGING_ENABLED", default=True)
+COMPLIANCE_MONITORING_ENABLED = env.bool("COMPLIANCE_MONITORING_ENABLED", default=True)
+
+# Security Alerting
+SECURITY_ALERTS_ENABLED = env.bool("SECURITY_ALERTS_ENABLED", default=True)
+SECURITY_ALERT_EMAIL = env("SECURITY_ALERT_EMAIL", default="security@fraud-platform.com")
+
+# Configuration Management
+CONFIG_ENCRYPTION_ENABLED = env.bool("CONFIG_ENCRYPTION_ENABLED", default=True)
+
 # Celery Configuration
 CELERY_BROKER_URL = env("CELERY_BROKER_URL", default="redis://localhost:6379/0")
 CELERY_RESULT_BACKEND = env("CELERY_RESULT_BACKEND", default="redis://localhost:6379/0")
@@ -184,11 +229,14 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = TIME_ZONE
 
+# Redis Configuration
+REDIS_URL = env("REDIS_URL", default="redis://localhost:6379/0")
+
 # Cache Configuration
 CACHES = {
     "default": {
         "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": env("REDIS_URL", default="redis://localhost:6379/1"),
+        "LOCATION": REDIS_URL.replace('/0', '/1'),  # Use different DB for cache
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
         },
