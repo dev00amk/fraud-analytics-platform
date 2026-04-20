@@ -1,3 +1,21 @@
+---
+type: candidate_profile
+candidate_id: mahesh-kumar-avula
+name: Mahesh Kumar Avula
+location: USA
+role_targets:
+  - Risk Analytics Investigator
+  - Fraud Analyst
+  - IT Risk Analyst
+experience_years: 3+
+work_authorization:
+  status: STEM OPT
+  valid_through: 2028
+  sponsorship_required: true
+source: user_submitted_resume
+last_updated: 2026-04-20
+---
+
 # Candidate Profile — Mahesh Kumar Avula
 
 Source provided by user and prepared for use with career-ops style workflows.
