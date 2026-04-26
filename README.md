@@ -47,6 +47,7 @@ The Fraud Analytics Platform is a comprehensive, real-time fraud detection and t
 - Velocity checks and behavioral analysis
 - Geographic and device fingerprinting
 
+
 ### 🛡️ Risk Management
 - Configurable risk rules and policies
 - Manual review queues
